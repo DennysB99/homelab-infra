@@ -18,4 +18,4 @@ repos:
     rev: v1.5.0
     hooks:
       - id: detect-secrets
-        exclude: ^(secrets\.yaml|packer-golden-image/.*)$ # Exclude encrypted secrets and Packer templates
+        exclude: ^(secrets\.yaml|packer/.*)$ # Exclude encrypted secrets and Packer templates

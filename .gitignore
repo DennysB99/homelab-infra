@@ -1,7 +1,7 @@
 # Local .terraform directories and runtime binaries
 .terraform/
 .terraform.*
-ansible-k3s/hosts.ini
+ansible/hosts.ini
 .pkrvars.hcl
 
 # Terraform State files (These hold plain-text infrastructure data)
@@ -11,12 +11,12 @@ ansible-k3s/hosts.ini
 tfplan
 
 # Generated configurations containing plaintext secrets
-kubernetes/authentik.yaml
-kubernetes/mealie.yaml
-kubernetes/kuma-ingress-watcher.yaml
-docker-compose-media.yaml
-docker-compose-backup.yaml
-docker-compose-magic-frame.yaml
+kubernetes/apps/authentik.yaml
+kubernetes/apps/mealie.yaml
+kubernetes/apps/kuma-ingress-watcher.yaml
+docker/media/docker-compose.yml
+docker/backup/docker-compose.yml
+docker/magic-frame/docker-compose.yml
 
 # Any local private cryptographic keys or text files
 *.txt

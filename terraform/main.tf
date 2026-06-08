@@ -220,7 +220,7 @@ resource "local_file" "ansible_inventory" {
 
   EOT
 
-  filename = "${path.module}/ansible-k3s/hosts.ini"
+  filename = "${path.module}/../ansible/hosts.ini"
 }
 
 resource "local_file" "magic_frame_compose" {
@@ -258,22 +258,22 @@ services:
       - /var/lib/docker-data/magic-frame/db:/var/lib/postgresql/data
 
 EOT
-  filename = "${path.module}/docker-compose-magic-frame.yaml"
+  filename = "${path.module}/../docker/magic-frame/docker-compose.yml"
 }
 
 
 resource "local_file" "mealie_manifest" {
-  content = templatefile("${path.module}/kubernetes/mealie.yaml.tftpl", {
+  content = templatefile("${path.module}/../kubernetes/apps/mealie.yaml.tftpl", {
     nfs_server         = local.secrets.storage.nfs_server
     nfs_path           = local.secrets.storage.nfs_path
     oidc_client_id     = local.secrets.mealie.oidc_client_id
     oidc_client_secret = local.secrets.mealie.oidc_client_secret
   })
-  filename = "${path.module}/kubernetes/mealie.yaml"
+  filename = "${path.module}/../kubernetes/apps/mealie.yaml"
 }
 
 resource "local_file" "authentik_manifest" {
-  content = templatefile("${path.module}/kubernetes/authentik.yaml.tftpl", {
+  content = templatefile("${path.module}/../kubernetes/apps/authentik.yaml.tftpl", {
     nfs_server        = local.secrets.storage.nfs_server
     nfs_path          = local.secrets.storage.nfs_path
     secret_key        = local.secrets.authentik.secret_key
@@ -281,16 +281,16 @@ resource "local_file" "authentik_manifest" {
     postgres_user     = local.secrets.authentik.postgres_user
     postgres_password = local.secrets.authentik.postgres_password
   })
-  filename = "${path.module}/kubernetes/authentik.yaml"
+  filename = "${path.module}/../kubernetes/apps/authentik.yaml"
 }
 
 resource "local_file" "kuma_ingress_watcher_manifest" {
-  content = templatefile("${path.module}/kubernetes/kuma-ingress-watcher.yaml.tftpl", {
+  content = templatefile("${path.module}/../kubernetes/apps/kuma-ingress-watcher.yaml.tftpl", {
     kuma_username   = local.secrets.uptime_kuma.username
     kuma_password   = local.secrets.uptime_kuma.password
-    controller_code = file("${path.module}/kubernetes/controller.py")
+    controller_code = file("${path.module}/../kubernetes/apps/controller.py")
   })
-  filename = "${path.module}/kubernetes/kuma-ingress-watcher.yaml"
+  filename = "${path.module}/../kubernetes/apps/kuma-ingress-watcher.yaml"
 }
 
 resource "local_file" "media_compose" {
@@ -565,7 +565,7 @@ services:
       - WATCHTOWER_CLEANUP=true
       - WATCHTOWER_POLL_INTERVAL=86400
 EOT
-  filename = "${path.module}/docker-compose-media.yaml"
+  filename = "${path.module}/../docker/media/docker-compose.yml"
 }
 
 resource "local_file" "backup_compose" {
@@ -592,7 +592,7 @@ services:
       - /var/lib/kopia/config:/app/config
       - /var/lib/kopia/cache:/app/cache
 EOT
-  filename = "${path.module}/docker-compose-backup.yaml"
+  filename = "${path.module}/../docker/backup/docker-compose.yml"
 }
 
 resource "null_resource" "deploy_media_compose" {
@@ -699,12 +699,12 @@ resource "null_resource" "ansible_provision" {
 
   triggers = {
     inventory_hash = local_file.ansible_inventory.content_sha256
-    playbook_hash  = filesha256("${path.module}/ansible-k3s/site.yml")
+    playbook_hash  = filesha256("${path.module}/../ansible/site.yml")
   }
 
   provisioner "local-exec" {
     interpreter = ["/bin/bash", "-c"]
-    command     = "cd ansible-k3s && ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i hosts.ini site.yml"
+    command     = "cd ${path.module}/../ansible && ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i hosts.ini site.yml"
   }
 }
 
@@ -722,9 +722,9 @@ resource "null_resource" "kubernetes_setup" {
       local_file.mealie_manifest.content,
       local_file.authentik_manifest.content,
       local_file.kuma_ingress_watcher_manifest.content,
-      filesha256("${path.module}/kubernetes/uptime-kuma.yaml"),
-      filesha256("${path.module}/kubernetes/traefik-dashboard-ingress.yaml"),
-      filesha256("${path.module}/kubernetes/cloudflared.yaml")
+      filesha256("${path.module}/../kubernetes/apps/uptime-kuma.yaml"),
+      filesha256("${path.module}/../kubernetes/system/traefik-dashboard-ingress.yaml"),
+      filesha256("${path.module}/../kubernetes/system/cloudflared.yaml")
     ]))
   }
 
@@ -746,17 +746,17 @@ resource "null_resource" "kubernetes_setup" {
       ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$SSH_USER"@$MASTER_IP "echo \"$SUDO_PASS\" | sudo -S cat /etc/rancher/k3s/k3s.yaml" | sed "s/127.0.0.1/$MASTER_IP/g" > ~/.kube/config
 
       echo "🚦 Configuring Traefik..."
-      kubectl apply -f kubernetes/traefik-config.yaml
-      kubectl apply -f kubernetes/traefik-dashboard-ingress.yaml
-      kubectl apply -f kubernetes/external-bridge.yaml
+      kubectl apply -f ${path.module}/../kubernetes/system/traefik-config.yaml
+      kubectl apply -f ${path.module}/../kubernetes/system/traefik-dashboard-ingress.yaml
+      kubectl apply -f ${path.module}/../kubernetes/system/external-bridge.yaml
 
       echo \"🚀 Deploying Apps...\"
-      kubectl apply -f kubernetes/authentik.yaml
-      kubectl apply -f kubernetes/mealie.yaml
-      kubectl apply -f kubernetes/uptime-kuma.yaml
-      kubectl apply -f kubernetes/kuma-ingress-watcher.yaml
-      kubectl apply -f kubernetes/minecraft-route.yaml
-      kubectl apply -f kubernetes/cloudflared.yaml
+      kubectl apply -f ${path.module}/../kubernetes/apps/authentik.yaml
+      kubectl apply -f ${path.module}/../kubernetes/apps/mealie.yaml
+      kubectl apply -f ${path.module}/../kubernetes/apps/uptime-kuma.yaml
+      kubectl apply -f ${path.module}/../kubernetes/apps/kuma-ingress-watcher.yaml
+      kubectl apply -f ${path.module}/../kubernetes/system/minecraft-route.yaml
+      kubectl apply -f ${path.module}/../kubernetes/system/cloudflared.yaml
       echo \"✅ REBUILD COMPLETE!\"
 
     EOT

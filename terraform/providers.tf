@@ -17,7 +17,7 @@ terraform {
 
 # 1. Tell Terraform where the encrypted file is
 data "sops_file" "secrets" {
-  source_file = "secrets.yaml"
+  source_file = "${path.module}/../secrets.yaml"
 }
 
 # 2. Decode the YAML structure into a usable Terraform variable
