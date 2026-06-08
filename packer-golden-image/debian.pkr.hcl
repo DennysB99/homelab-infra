@@ -1,6 +1,6 @@
 variable "proxmox_api_token" {
   type      = string
-  sensitive = true 
+  sensitive = true
 }
 
 variable "proxmox_url" {
@@ -32,7 +32,7 @@ source "proxmox-iso" "debian" {
     type     = "ide"
     iso_file = "local:iso/debian-12.5.0-amd64-netinst.iso"
   }
-  
+
   iso_download_pve = false
 
   # Virtual Machine Hardware
@@ -70,7 +70,7 @@ source "proxmox-iso" "debian" {
 
   # SSH Connection (Packer waits for this to know the install is done)
   ssh_username = "debian"
-  ssh_password = "packer"
+  ssh_password = "packer" # pragma: allowlist secret
   ssh_timeout  = "20m"
 }
 

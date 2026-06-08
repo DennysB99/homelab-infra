@@ -9,12 +9,12 @@ locals {
   }
 
   master_ip = nonsensitive([for name, ip in local.secrets.virtual_machines.k3s_cluster : ip if can(regex("master", name))][0])
-  
+
   # Moving AMP to primary compute VLAN permanently until DMZ is fixed
-  amp_ip    = "10.0.50.40"
+  amp_ip = "10.0.50.40"
 
   # Concatenates both K3s, Docker, and AMP IPs so we can clear SSH keys for everything!
-  all_ips   = nonsensitive(join(" ", concat(
+  all_ips = nonsensitive(join(" ", concat(
     values(local.secrets.virtual_machines.k3s_cluster),
     values(local.secrets.virtual_machines.docker_hosts),
     [local.amp_ip]
@@ -25,10 +25,10 @@ locals {
 # SECTION 1: K3S KUBERNETES CLUSTER (THE COMPUTE LAYER)
 # ==============================================================================
 resource "proxmox_virtual_environment_vm" "k3s_nodes" {
-  for_each  = nonsensitive(local.secrets.virtual_machines.k3s_cluster)
-  
+  for_each = nonsensitive(local.secrets.virtual_machines.k3s_cluster)
+
   name      = each.key
-  node_name = "pve" 
+  node_name = "pve"
 
   clone {
     vm_id = 8000
@@ -48,8 +48,8 @@ resource "proxmox_virtual_environment_vm" "k3s_nodes" {
   }
 
   network_device {
-    bridge  = "vmbr0" 
-    vlan_id = 50      
+    bridge  = "vmbr0"
+    vlan_id = 50
   }
 
   stop_on_destroy = true
@@ -61,7 +61,7 @@ resource "proxmox_virtual_environment_vm" "k3s_nodes" {
         gateway = local.secrets.virtual_machines.gw_ip
       }
     }
-    
+
     user_account {
       username = local.secrets.ansible.user
       password = local.secrets.ansible.password
@@ -74,8 +74,8 @@ resource "proxmox_virtual_environment_vm" "k3s_nodes" {
 # SECTION 2: DOCKER HOSTS (THE STANDALONE APP LAYER)
 # ==============================================================================
 resource "proxmox_virtual_environment_vm" "docker_nodes" {
-  for_each  = nonsensitive(local.secrets.virtual_machines.docker_hosts)
-  
+  for_each = nonsensitive(local.secrets.virtual_machines.docker_hosts)
+
   name      = each.key
   node_name = "pve"
 
@@ -98,7 +98,7 @@ resource "proxmox_virtual_environment_vm" "docker_nodes" {
 
   network_device {
     bridge  = "vmbr0"
-    vlan_id = 50      
+    vlan_id = 50
   }
 
   stop_on_destroy = true
@@ -150,7 +150,7 @@ resource "proxmox_virtual_environment_vm" "amp_node" {
 
   network_device {
     bridge  = "vmbr0"
-    vlan_id = 50 
+    vlan_id = 50
   }
 
   stop_on_destroy = true
@@ -182,26 +182,26 @@ resource "proxmox_virtual_environment_vm" "amp_node" {
 resource "local_file" "ansible_inventory" {
   content = <<-EOT
     [master]
-    %{ for name, ip in local.secrets.virtual_machines.k3s_cluster ~}
-    %{ if can(regex("master", name)) ~}
+    %{for name, ip in local.secrets.virtual_machines.k3s_cluster~}
+    %{if can(regex("master", name))~}
     ${name} ansible_host=${ip}
-    %{ endif ~}
-    %{ endfor ~}
+    %{endif~}
+    %{endfor~}
 
     [workers]
-    %{ for name, ip in local.secrets.virtual_machines.k3s_cluster ~}
-    %{ if can(regex("worker", name)) ~}
+    %{for name, ip in local.secrets.virtual_machines.k3s_cluster~}
+    %{if can(regex("worker", name))~}
     ${name} ansible_host=${ip}
-    %{ endif ~}
-    %{ endfor ~}
-    %{ for name, ip in try(local.secrets.bare_metal.pi_cluster, {}) ~}
+    %{endif~}
+    %{endfor~}
+    %{for name, ip in try(local.secrets.bare_metal.pi_cluster, {})~}
     ${name} ansible_host=${ip} ansible_user=${local.secrets.bare_metal.user} ansible_ssh_private_key_file=~/.ssh/id_ed25519
-    %{ endfor ~}
+    %{endfor~}
 
     [docker]
-    %{ for name, ip in local.secrets.virtual_machines.docker_hosts ~}
+    %{for name, ip in local.secrets.virtual_machines.docker_hosts~}
     ${name} ansible_host=${ip}
-    %{ endfor ~}
+    %{endfor~}
 
     [amp]
     amp-core-01 ansible_host=${local.amp_ip}
@@ -219,12 +219,12 @@ resource "local_file" "ansible_inventory" {
     amp_oidc_client_secret=${local.amp_secrets.oidc_client_secret}
 
   EOT
-  
+
   filename = "${path.module}/ansible-k3s/hosts.ini"
 }
 
 resource "local_file" "magic_frame_compose" {
-  content = <<EOT
+  content  = <<EOT
 services:
   app:
     image: jeremiaa/magic-frame:latest
@@ -234,9 +234,9 @@ services:
     ports:
       - "3080:3000"
     environment:
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/magicdashboard?schema=public
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/magicdashboard?schema=public # pragma: allowlist secret
       - NODE_ENV=production
-      - SESSION_SECRET=69542a6be8c9a62ef3fac123c5b81c1e1da369ed2878bc5c28f039992ea78cf6
+      - SESSION_SECRET=${local.secrets.magic_frame.session_secret}
       - APP_BASE_URL=http://10.0.50.30:3080
     volumes:
       - /var/lib/docker-data/magic-frame/data:/opt/data
@@ -286,15 +286,15 @@ resource "local_file" "authentik_manifest" {
 
 resource "local_file" "kuma_ingress_watcher_manifest" {
   content = templatefile("${path.module}/kubernetes/kuma-ingress-watcher.yaml.tftpl", {
-    kuma_username     = local.secrets.uptime_kuma.username
-    kuma_password     = local.secrets.uptime_kuma.password
-    controller_code   = file("${path.module}/kubernetes/controller.py")
+    kuma_username   = local.secrets.uptime_kuma.username
+    kuma_password   = local.secrets.uptime_kuma.password
+    controller_code = file("${path.module}/kubernetes/controller.py")
   })
   filename = "${path.module}/kubernetes/kuma-ingress-watcher.yaml"
 }
 
 resource "local_file" "media_compose" {
-  content = <<EOT
+  content  = <<EOT
 services:
   gluetun:
     image: qmcgaw/gluetun:latest
@@ -569,7 +569,7 @@ EOT
 }
 
 resource "local_file" "backup_compose" {
-  content = <<EOT
+  content  = <<EOT
 services:
   kopia:
     image: kopia/kopia:latest
@@ -616,7 +616,7 @@ resource "null_resource" "deploy_media_compose" {
       echo "🚀 Copying Media and Backup Compose stacks to Docker host..."
       scp -i "$SSH_KEY" -o StrictHostKeyChecking=no ${local_file.media_compose.filename} "$SSH_USER"@"$DOCKER_IP":/tmp/docker-compose-media.yml
       scp -i "$SSH_KEY" -o StrictHostKeyChecking=no ${local_file.backup_compose.filename} "$SSH_USER"@"$DOCKER_IP":/tmp/docker-compose-backup.yml
-      
+
       echo "📦 Moving to final location and starting containers..."
       ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no "$SSH_USER"@"$DOCKER_IP" "
         echo '$SUDO_PASS' | sudo -S mkdir -p /var/lib/docker-data &&
@@ -630,7 +630,7 @@ resource "null_resource" "deploy_media_compose" {
         echo '$SUDO_PASS' | sudo -S cp /tmp/docker-compose-media.yml /var/lib/docker-data/media/docker-compose.yml &&
         echo '$SUDO_PASS' | sudo -S docker compose -f /var/lib/docker-data/media/docker-compose.yml down || true &&
         echo '$SUDO_PASS' | sudo -S docker compose -f /var/lib/docker-data/media/docker-compose.yml up -d --remove-orphans &&
-        
+
         echo '💾 Deploying Kopia Backup stack...' &&
         echo '$SUDO_PASS' | sudo -S mkdir -p /var/lib/kopia &&
         echo '$SUDO_PASS' | sudo -S chown -R debian:debian /var/lib/kopia &&
@@ -671,7 +671,7 @@ resource "null_resource" "wait_for_ssh" {
         (
           # Clear stale fingerprints
           ssh-keygen -R $ip >/dev/null 2>&1 || true
-          
+
           echo "   🔍 Checking $ip..."
           while true; do
             ssh -i "$SSH_KEY" -o ConnectTimeout=2 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$SSH_USER"@$ip 'echo "ready"' >/dev/null 2>&1
@@ -684,7 +684,7 @@ resource "null_resource" "wait_for_ssh" {
           done
         ) &
       done
-      
+
       wait
       echo "☕ Settle delay: Waiting 10 seconds..."
       sleep 10
@@ -704,14 +704,14 @@ resource "null_resource" "ansible_provision" {
 
   provisioner "local-exec" {
     interpreter = ["/bin/bash", "-c"]
-    command = "cd ansible-k3s && ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i hosts.ini site.yml"
+    command     = "cd ansible-k3s && ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i hosts.ini site.yml"
   }
 }
 
 # STAGE 3: Kubernetes Setup & App Deployment
 resource "null_resource" "kubernetes_setup" {
   depends_on = [
-    null_resource.ansible_provision, 
+    null_resource.ansible_provision,
     local_file.mealie_manifest,
     local_file.authentik_manifest,
     local_file.kuma_ingress_watcher_manifest

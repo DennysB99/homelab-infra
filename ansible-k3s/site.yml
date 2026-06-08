@@ -36,7 +36,7 @@
       apt:
         update_cache: yes
         cache_valid_time: 0
-        
+
     - name: Ensure nfs-common is installed on ALL nodes
       apt:
         name: nfs-common
@@ -68,7 +68,7 @@
 # ==============================================================================
 - name: Bootstrapping the Control Plane
   hosts: master
-  become: true 
+  become: true
   tasks:
     - name: Install K3s on Master
       shell: curl -sfL https://get.k3s.io | sh -
@@ -229,7 +229,7 @@
   tasks:
     - name: Ensure prerequisites are installed
       apt:
-        name: 
+        name:
           - wget
           - gnupg
           - software-properties-common

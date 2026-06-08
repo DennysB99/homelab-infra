@@ -5,7 +5,7 @@ terraform {
     # The modern, highly reliable Proxmox provider
     proxmox = {
       source  = "bpg/proxmox"
-      version = "~> 0.50.0" 
+      version = "~> 0.50.0"
     }
     # The plugin that decrypts SOPS files in RAM
     sops = {
@@ -30,7 +30,7 @@ provider "proxmox" {
   endpoint  = local.secrets.proxmox.api_url
   api_token = "${local.secrets.proxmox.username}=${local.secrets.proxmox.api_token}"
   insecure  = true
-  
+
   ssh {
     agent = true
   }

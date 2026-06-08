@@ -20,19 +20,19 @@ graph TD
     PVE[Proxmox VE Hypervisor] --> VM_K3s[K3s Cluster]
     PVE --> VM_Docker[Docker Standalone Host]
     PVE --> VM_AMP[AMP Game Server Host]
-    
+
     subgraph K3s Cluster
         Master[k3s-master-01]
         Worker1[k3s-worker-01]
         Worker2[k3s-worker-02]
     end
-    
+
     subgraph Standalone Docker
         Media[Media Stack Compose]
         Watchtower[Watchtower]
         Kopia[Kopia Backup]
     end
-    
+
     subgraph Edge
         Pi[Raspberry Pi Kiosk]
     end
