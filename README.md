@@ -6,6 +6,7 @@
 [![Docker](https://img.shields.io/badge/Docker-%232496ED.svg?style=flat&logo=docker&logoColor=white)](#)
 [![Proxmox](https://img.shields.io/badge/Proxmox-%23E57000.svg?style=flat&logo=proxmox&logoColor=white)](#)
 [![SOPS](https://img.shields.io/badge/SOPS-Security-brightgreen.svg?style=flat)](#)
+[![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](https://github.com/pre-commit/pre-commit)
 
 A fully declarative, git-driven homelab infrastructure repository. This project provisions, configures, and deploys a multi-node virtualized environment on a Proxmox VE hypervisor, integrating automated service configurations, secure network tunnels, Single Sign-On (SSO), and media automation.
 
@@ -69,6 +70,10 @@ This repository is public-portfolio friendly. All sensitive secrets, tokens, and
   export SOPS_AGE_KEY=$(pass-cli item view --item-title "sops-private-key" --vault-name "Hosted" --field password)
   ```
 * No decryption keys ever touch the local filesystem.
+
+### 3. Pre-Commit Hooks (Security Enforcement)
+* Every commit is automatically scanned before being pushed using **pre-commit** hooks.
+* Hooks include Yelp's **`detect-secrets`** tool to scan for raw high-entropy values (such as plain-text passwords or API tokens) to prevent accidental credentials leaks, as well as automatic formatters (`terraform_fmt`, `end-of-file-fixer`, etc.).
 
 ---
 
