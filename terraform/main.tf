@@ -40,7 +40,7 @@ resource "proxmox_virtual_environment_vm" "k3s_nodes" {
     cores = 8
   }
   memory {
-    dedicated = 4096
+    dedicated = 3072
   }
 
   vga {
@@ -141,7 +141,7 @@ resource "proxmox_virtual_environment_vm" "amp_node" {
     cores = 4
   }
   memory {
-    dedicated = 8192
+    dedicated = 11264
   }
 
   vga {
