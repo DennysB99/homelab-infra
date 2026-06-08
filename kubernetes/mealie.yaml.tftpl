@@ -1,0 +1,145 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mealie
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mealie-oidc-secrets
+  namespace: mealie
+type: Opaque
+stringData:
+  client-id: "${oidc_client_id}"
+  client-secret: "${oidc_client_secret}"
+
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: mealie-pv
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteMany
+  mountOptions:
+    - nfsvers=3
+    - nolock
+  nfs:
+    server: ${nfs_server}
+    path: ${nfs_path}/mealie
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mealie-data-pvc
+  namespace: mealie
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mealie
+  namespace: mealie
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mealie
+  template:
+    metadata:
+      labels:
+        app: mealie
+    spec:
+      containers:
+      - name: mealie
+        image: ghcr.io/mealie-recipes/mealie:latest
+        ports:
+        - containerPort: 9000
+        env:
+        - name: API_PORT
+          value: "9000"
+        - name: PUID
+          value: "3000"
+        - name: PGID
+          value: "3000"
+        - name: OIDC_AUTH_ENABLED
+          value: "true"
+        - name: OIDC_SIGN_IN_TEXT
+          value: "Login with Authentik"
+        - name: OIDC_CONFIGURATION_URL
+          value: "https://auth.netnook.cloud/application/o/food/.well-known/openid-configuration"
+        - name: OIDC_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: mealie-oidc-secrets
+              key: client-id
+        - name: OIDC_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: mealie-oidc-secrets
+              key: client-secret
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "1024Mi"
+            cpu: "1000m"
+        volumeMounts:
+        - name: data
+          mountPath: /app/data
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: mealie-data-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mealie-service
+  namespace: mealie
+spec:
+  type: ClusterIP
+  selector:
+    app: mealie
+  ports:
+    - port: 9000
+      targetPort: 9000
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mealie-ingress
+  namespace: mealie
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    kubernetes.io/ingress.class: traefik
+    uptime-kuma.autodiscovery.probe.enabled: "true"
+    uptime-kuma.autodiscovery.probe.type: "http"
+    uptime-kuma.autodiscovery.probe.parent: "Kubernetes Apps"
+spec:
+  rules:
+  - host: food.netnook.cloud
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: mealie-service
+            port:
+              number: 9000

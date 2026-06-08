@@ -1,0 +1,37 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: traefik-dashboard
+  namespace: kube-system
+  annotations:
+    uptime-kuma.autodiscovery.probe.enabled: "true"
+    uptime-kuma.autodiscovery.probe.path: "/dashboard/"
+    uptime-kuma.autodiscovery.probe.parent: "Kubernetes Apps"
+spec:
+  entryPoints:
+    - web
+    - websecure
+  routes:
+    - match: Host(`traefik.netnook.cloud`) && Path(`/`)
+      kind: Rule
+      middlewares:
+        - name: redirect-to-dashboard
+      services:
+        - name: api@internal
+          kind: TraefikService
+    - match: Host(`traefik.netnook.cloud`) && (PathPrefix(`/dashboard`) || PathPrefix(`/api`))
+      kind: Rule
+      services:
+        - name: api@internal
+          kind: TraefikService
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-to-dashboard
+  namespace: kube-system
+spec:
+  redirectRegex:
+    regex: "^(https?://[^/]+)/?$"
+    replacement: "${1}/dashboard/"
+    permanent: true

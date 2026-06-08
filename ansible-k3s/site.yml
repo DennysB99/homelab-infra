@@ -1,0 +1,418 @@
+---
+# ==============================================================================
+# PLAY 1: Runs on EVERY node (Master + Workers)
+# ==============================================================================
+- name: Pre-flight Checks and Dependencies
+  hosts: all
+  become: true
+  tasks:
+    - name: Ensure cloud-guest-utils is installed for disk expansion
+      apt:
+        name: cloud-guest-utils
+        state: present
+        update_cache: yes
+
+    - name: Expand LVM partition and filesystem to fill virtual disk
+      shell: |
+        if lsblk | grep -q "debian--vg-root"; then
+          growpart /dev/sda 2 || true
+          growpart /dev/sda 5 || true
+          pvresize /dev/sda5 || true
+          lvextend -l +100%FREE /dev/debian-vg/root || true
+          resize2fs /dev/debian-vg/root || true
+        fi
+      register: expand_disk
+      changed_when: "'changed' in expand_disk.stdout or 'resized' in expand_disk.stdout"
+      failed_when: false
+
+    - name: Ensure curl is installed
+      apt:
+        name: curl
+        state: present
+        update_cache: true
+
+    # Moved this up here so the Master gets it too!
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 0
+        
+    - name: Ensure nfs-common is installed on ALL nodes
+      apt:
+        name: nfs-common
+        state: present
+        update_cache: yes
+        force_apt_get: yes
+
+    - name: Install Tailscale
+      shell: curl -fsSL https://tailscale.com/install.sh | sh
+      args:
+        creates: /usr/bin/tailscale
+
+    - name: Ensure Tailscale service is enabled
+      service:
+        name: tailscaled
+        state: started
+        enabled: true
+
+    - name: Bring Tailscale up with SSH (OAuth)
+      shell: tailscale up --authkey="{{ tailscale_client_secret }}" --ssh --hostname="{{ inventory_hostname }}" --advertise-tags=tag:server --accept-routes --accept-dns
+      when: tailscale_client_secret is defined and tailscale_client_secret | length > 0
+      register: tailscale_up
+      changed_when: tailscale_up.rc == 0
+      failed_when: false
+      no_log: true
+
+# ==============================================================================
+# PLAY 2: Runs ONLY on the Master node
+# ==============================================================================
+- name: Bootstrapping the Control Plane
+  hosts: master
+  become: true 
+  tasks:
+    - name: Install K3s on Master
+      shell: curl -sfL https://get.k3s.io | sh -
+      args:
+        creates: /usr/local/bin/k3s
+
+    - name: Wait for node-token to be generated
+      wait_for:
+        path: /var/lib/rancher/k3s/server/node-token
+        state: present
+        timeout: 60
+
+    - name: Extract the secure Join Token
+      slurp:
+        src: /var/lib/rancher/k3s/server/node-token
+      register: node_token
+
+# ==============================================================================
+# PLAY 2.5: Bootstrap K3s Agent on Worker Nodes
+# ==============================================================================
+- name: Join Worker Nodes to K3s Cluster
+  hosts: workers
+  become: true
+  tasks:
+    - name: Check if K3s agent is already installed
+      stat:
+        path: /usr/local/bin/k3s-agent-uninstall.sh
+      register: k3s_agent_installed
+
+    - name: Fetch K3s join token from Master
+      delegate_to: k3s-master-01
+      slurp:
+        src: /var/lib/rancher/k3s/server/node-token
+      register: worker_node_token
+      when: not k3s_agent_installed.stat.exists
+
+    - name: Install K3s agent and join Master
+      shell: |
+        curl -sfL https://get.k3s.io | K3S_URL=https://10.0.50.20:6443 K3S_TOKEN="{{ worker_node_token.content | b64decode | trim }}" sh -
+      when: not k3s_agent_installed.stat.exists
+
+# ==============================================================================
+# PLAY 3: Runs ONLY on the Docker nodes
+# ==============================================================================
+
+- name: Standalone Docker Host Setup
+  hosts: docker
+  become: true
+  tasks:
+    - name: Install dependencies for Docker
+      apt:
+        name:
+          - ca-certificates
+          - gnupg
+        state: present
+
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/debian/gpg
+        state: present
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable"
+        state: present
+
+    - name: Install Docker Engine and Compose
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+        update_cache: true
+
+    - name: Ensure Docker service is running
+      service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Ensure required packages are installed
+      apt:
+        name:
+          - nfs-common
+          - rsync
+        state: present
+
+    - name: Create mount point for NFS
+      file:
+        path: /mnt/HDDs
+        state: directory
+
+    - name: Mount NFS share
+      ansible.posix.mount:
+        src: "{{ nfs_server }}:{{ nfs_path }}"
+        path: /mnt/HDDs
+        opts: rw,async,noatime,hard,nfsvers=3
+        fstype: nfs
+        state: mounted
+
+    - name: Ensure docker-data directory exists
+      file:
+        path: /mnt/HDDs/docker-data
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0775'
+
+    - name: Ensure media library and torrent directories exist with write permissions
+      file:
+        path: "/mnt/HDDs/media/{{ item }}"
+        state: directory
+        mode: '0777'
+      loop:
+        - ""
+        - "library"
+        - "library/tv"
+        - "library/movies"
+        - "library/anime"
+        - "torrents"
+        - "torrents/tv"
+        - "torrents/movies"
+        - "torrents/anime"
+
+
+    - name: Add user to docker group
+      user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: true
+
+    - name: Ensure Kopia backup directory exists on NFS
+      file:
+        path: /mnt/HDDs/backups
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0775'
+
+    - name: Remove legacy Docker backup script
+      file:
+        path: /usr/local/bin/backup-docker-data.sh
+        state: absent
+
+    - name: Remove legacy Docker backup cron job
+      cron:
+        name: "Backup docker configs to NFS"
+        state: absent
+
+# ==============================================================================
+# PLAY 5: AMP Management Panel Setup
+# ==============================================================================
+- name: AMP Management Panel Setup
+  hosts: amp
+  become: true
+  tasks:
+    - name: Ensure prerequisites are installed
+      apt:
+        name: 
+          - wget
+          - gnupg
+          - software-properties-common
+          - rsync
+        state: present
+
+    - name: Create .ampdata mount point
+      file:
+        path: /home/amp/.ampdata
+        state: directory
+        mode: '0770'
+
+    - name: Mount NAS directly to AMP data folder
+      ansible.posix.mount:
+        src: "{{ nfs_server }}:/mnt/HDDs/game-servers"
+        path: /home/amp/.ampdata
+        opts: rw,async,noatime,hard,nfsvers=3,nolock
+        fstype: nfs
+        state: mounted
+
+    - name: Add AMP GPG key
+      apt_key:
+        url: https://repo.cubecoders.com/archive.key
+        state: present
+
+    - name: Add AMP Repository
+      apt_repository:
+        repo: "deb https://repo.cubecoders.com/ debian/"
+        state: present
+        update_cache: yes
+
+    - name: Install AMP Instance Manager
+      apt:
+        name: ampinstmgr
+        state: present
+
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/debian/gpg
+        state: present
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable"
+        state: present
+
+    - name: Install Docker for containerized instances
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+        update_cache: true
+
+    - name: Ensure amp user is in docker group
+      user:
+        name: amp
+        groups: docker
+        append: true
+      ignore_errors: true
+
+    - name: Configure AMP OIDC (SSO) settings
+      lineinfile:
+        path: /home/amp/.ampdata/instances/ADS01/AMPConfig.conf
+        regexp: "^{{ item.key }}="
+        line: "{{ item.key }}={{ item.value }}"
+      loop:
+        - { key: 'Login.UseOIDC', value: 'True' }
+        - { key: 'Login.OIDCProviderFriendlyName', value: 'Authentik' }
+        - { key: 'Login.OIDCClientID', value: '{{ amp_oidc_client_id }}' }
+        - { key: 'Login.OIDCClientSecret', value: '{{ amp_oidc_client_secret }}' }
+        - { key: 'Login.OIDCAuthorizeScopes', value: '["openid","profile","email","groups"]' }
+        - { key: 'Login.OIDCRedirectUri', value: 'https://games.netnook.cloud/' }
+        - { key: 'Login.OIDCAuthorizeEndpoint', value: 'https://auth.netnook.cloud/application/o/authorize/' }
+        - { key: 'Login.OIDCTokenEndpoint', value: 'https://auth.netnook.cloud/application/o/token/' }
+        - { key: 'Login.OIDCUserInfoEndpoint', value: 'https://auth.netnook.cloud/application/o/userinfo/' }
+        - { key: 'Login.OIDCLogoutEndpoint', value: 'https://auth.netnook.cloud/application/o/amp/end-session/' }
+        - { key: 'Login.OIDCRevokeEndpoint', value: 'https://auth.netnook.cloud/application/o/revoke/' }
+        - { key: 'Login.OIDCRoleNamePrefix', value: 'AMP_' }
+        - { key: 'Login.OIDCUsernameClaim', value: 'preferred_username' }
+      when: amp_oidc_client_id is defined
+      notify: Restart AMP ADS01
+
+    - name: Configure AMP Deployment License Key
+      lineinfile:
+        path: /home/amp/.ampdata/instances/ADS01/ADSModule.kvp
+        regexp: "^Defaults.NewInstanceKey="
+        line: "Defaults.NewInstanceKey=e256ae06-816a-46dc-9151-1c9739a7fe3f"
+      notify: Restart AMP ADS01
+
+    - name: Ensure services are started
+      service:
+        name: docker
+        state: started
+        enabled: true
+
+  handlers:
+    - name: Restart AMP ADS01
+      shell: "sudo -u amp ampinstmgr -q ADS01 || true && sleep 10 && sudo -u amp TERM=xterm ampinstmgr -s ADS01"
+
+# ==============================================================================
+# PLAY 6: Apply Kubernetes Node Labels and Taints
+# ==============================================================================
+- name: Apply Kubernetes Node Labels and Taints
+  hosts: master
+  become: true
+  tasks:
+    - name: Label RasPi node as kiosk
+      shell: |
+        kubectl label node raspi node-role.kubernetes.io/kiosk=true --overwrite
+      register: label_res
+      changed_when: "'labeled' in label_res.stdout"
+      failed_when: false
+
+    - name: Taint RasPi node as kiosk
+      shell: |
+        kubectl taint node raspi kiosk=true:NoSchedule --overwrite
+      register: taint_res
+      changed_when: "'tainted' in taint_res.stdout"
+      failed_when: false
+
+# ==============================================================================
+# PLAY 7: Raspberry Pi Uptime Kuma Backup Setup
+# ==============================================================================
+- name: Raspberry Pi Uptime Kuma Backup Setup
+  hosts: pi-server-01
+  become: true
+  tasks:
+    - name: Ensure required packages are installed
+      apt:
+        name:
+          - nfs-common
+          - rsync
+        state: present
+
+    - name: Create mount point for NFS
+      file:
+        path: /mnt/HDDs
+        state: directory
+
+    - name: Mount NFS share
+      ansible.posix.mount:
+        src: "{{ nfs_server }}:{{ nfs_path }}"
+        path: /mnt/HDDs
+        opts: rw,async,noatime,hard,nfsvers=3
+        fstype: nfs
+        state: mounted
+
+    - name: Ensure Uptime Kuma backup directory exists on NFS
+      file:
+        path: /mnt/HDDs/backups/uptime-kuma
+        state: directory
+        owner: primeexe
+        group: primeexe
+        mode: '0775'
+
+    - name: Create Uptime Kuma backup script
+      copy:
+        dest: /usr/local/bin/backup-uptime-kuma.sh
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          set -e
+          LOCAL_DB="/var/lib/uptime-kuma/kuma.db"
+          NFS_DIR="/mnt/HDDs/backups/uptime-kuma"
+          NFS_DB="$NFS_DIR/kuma.db"
+          if [ ! -f "$LOCAL_DB" ] || [ ! -d "$NFS_DIR" ]; then
+              echo "ERROR: Local database or NFS backup directory does not exist. Skipping backup."
+              exit 1
+          fi
+          echo "🔔 Starting Uptime Kuma online database backup..."
+          python3 -c "import sqlite3; sqlite3.connect('$LOCAL_DB').backup(sqlite3.connect('$NFS_DB'))"
+          if [ -d "/var/lib/uptime-kuma/upload" ]; then
+              rsync -ax --delete "/var/lib/uptime-kuma/upload/" "$NFS_DIR/upload/"
+          fi
+          echo "✅ Uptime Kuma backup completed successfully!"
+
+    - name: Schedule daily Uptime Kuma configs backup cron job
+      cron:
+        name: "Backup Uptime Kuma configs to NFS"
+        user: primeexe
+        hour: "3"
+        minute: "30"
+        job: "/usr/local/bin/backup-uptime-kuma.sh >/dev/null 2>&1"

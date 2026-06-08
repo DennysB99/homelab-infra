@@ -1,0 +1,50 @@
+        state: present
+
+    - name: Install Docker for containerized instances
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+        update_cache: true
+
+    - name: Ensure amp user is in docker group
+      user:
+        name: amp
+        groups: docker
+        append: true
+      ignore_errors: true
+
+    - name: Configure AMP OIDC (SSO) settings
+      lineinfile:
+        path: /home/amp/.ampdata/instances/ADS01/AMPConfig.conf
+        regexp: "^{{ item.key }}="
+        line: "{{ item.key }}={{ item.value }}"
+      loop:
+        - { key: 'Login.UseOIDC', value: 'True' }
+        - { key: 'Login.OIDCProviderFriendlyName', value: 'Authentik' }
+        - { key: 'Login.OIDCClientID', value: '{{ amp_oidc_client_id }}' }
+        - { key: 'Login.OIDCClientSecret', value: '{{ amp_oidc_client_secret }}' }
+        - { key: 'Login.OIDCAuthorizeScopes', value: '["openid","profile","email","groups"]' }
+        - { key: 'Login.OIDCRedirectUri', value: 'https://games.netnook.cloud/' }
+        - { key: 'Login.OIDCAuthorizeEndpoint', value: 'https://auth.netnook.cloud/application/o/authorize/' }
+        - { key: 'Login.OIDCTokenEndpoint', value: 'https://auth.netnook.cloud/application/o/token/' }
+        - { key: 'Login.OIDCUserInfoEndpoint', value: 'https://auth.netnook.cloud/application/o/userinfo/' }
+        - { key: 'Login.OIDCLogoutEndpoint', value: 'https://auth.netnook.cloud/application/o/amp/end-session/' }
+        - { key: 'Login.OIDCRevokeEndpoint', value: 'https://auth.netnook.cloud/application/o/revoke/' }
+        - { key: 'Login.OIDCRoleNamePrefix', value: 'AMP_' }
+        - { key: 'Login.OIDCUsernameClaim', value: 'preferred_username' }
+      when: amp_oidc_client_id is defined
+      notify: Restart AMP ADS01
+
+    - name: Ensure services are started
+      service:
+        name: docker
+        state: started
+        enabled: true
+
+  handlers:
+    - name: Restart AMP ADS01
+      shell: "sudo -u amp ampinstmgr -r ADS01"

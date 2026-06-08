@@ -1,0 +1,20 @@
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    ingress:
+      dashboard:
+        enabled: true
+    ports:
+      minecraft:
+        port: 25565
+        expose:
+          default: true
+        exposedPort: 25565
+    additionalArguments:
+      - "--providers.kubernetesingress.ingressclass=traefik"
+      - "--entryPoints.web.forwardedHeaders.insecure"
+      - "--entryPoints.minecraft.address=:25565/tcp"

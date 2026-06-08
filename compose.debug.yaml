@@ -1,0 +1,6 @@
+services:
+  coreinfra:
+    image: coreinfra
+    build:
+      context: .
+      dockerfile: ./Dockerfile

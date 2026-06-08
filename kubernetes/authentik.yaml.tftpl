@@ -1,0 +1,316 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: authentik
+
+---
+# ------------------------------------------------------------------------------
+# PERSISTENCE (Postgres & Media)
+# ------------------------------------------------------------------------------
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: authentik-db-pv
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  mountOptions:
+    - nfsvers=3
+    - nolock
+  nfs:
+    server: ${nfs_server}
+    path: ${nfs_path}/authentik/postgres
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: authentik-db-pvc
+  namespace: authentik
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: ""
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: authentik-media-pv
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteMany
+  mountOptions:
+    - nfsvers=3
+    - nolock
+  nfs:
+    server: ${nfs_server}
+    path: ${nfs_path}/authentik/media
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: authentik-media-pvc
+  namespace: authentik
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+# ------------------------------------------------------------------------------
+# POSTGRES
+# ------------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: authentik-postgres
+  namespace: authentik
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:16-alpine
+        env:
+        - name: POSTGRES_DB
+          value: "${postgres_name}"
+        - name: POSTGRES_USER
+          value: "${postgres_user}"
+        - name: POSTGRES_PASSWORD
+          value: "${postgres_password}"
+        resources:
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+          requests:
+            memory: "512Mi"
+            cpu: "256m"
+        volumeMounts:
+        - name: db-data
+          mountPath: /var/lib/postgresql/data
+      volumes:
+      - name: db-data
+        persistentVolumeClaim:
+          claimName: authentik-db-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: authentik
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+
+---
+# ------------------------------------------------------------------------------
+# REDIS
+# ------------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: authentik-redis
+  namespace: authentik
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:alpine
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: authentik
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+
+---
+# ------------------------------------------------------------------------------
+# AUTHENTIK SERVER & WORKER
+# ------------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: authentik-server
+  namespace: authentik
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: authentik-server
+  template:
+    metadata:
+      labels:
+        app: authentik-server
+    spec:
+      containers:
+      - name: authentik-server
+        image: ghcr.io/goauthentik/server:2026.5.0
+        args: ["server"]
+        env:
+        - name: AUTHENTIK_SECRET_KEY
+          value: "${secret_key}"
+        - name: AUTHENTIK_POSTGRESQL__HOST
+          value: "postgres"
+        - name: AUTHENTIK_POSTGRESQL__NAME
+          value: "${postgres_name}"
+        - name: AUTHENTIK_POSTGRESQL__USER
+          value: "${postgres_user}"
+        - name: AUTHENTIK_POSTGRESQL__PASSWORD
+          value: "${postgres_password}"
+        - name: AUTHENTIK_REDIS__HOST
+          value: "redis"
+        - name: AUTHENTIK_ENVIRONMENT
+          value: "kubernetes"
+        - name: AUTHENTIK_LISTEN__TRUSTED_PROXY_IPS
+          value: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+        - name: AUTHENTIK_USER_ID
+          value: "3000"
+        - name: AUTHENTIK_GROUP_ID
+          value: "3000"
+        ports:
+        - containerPort: 9000
+        - containerPort: 9443
+        volumeMounts:
+        - name: media
+          mountPath: /media
+      volumes:
+      - name: media
+        persistentVolumeClaim:
+          claimName: authentik-media-pvc
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: authentik-worker
+  namespace: authentik
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: authentik-worker
+  template:
+    metadata:
+      labels:
+        app: authentik-worker
+    spec:
+      containers:
+      - name: authentik-worker
+        image: ghcr.io/goauthentik/server:2026.5.0
+        args: ["worker"]
+        env:
+        - name: AUTHENTIK_SECRET_KEY
+          value: "${secret_key}"
+        - name: AUTHENTIK_POSTGRESQL__HOST
+          value: "postgres"
+        - name: AUTHENTIK_POSTGRESQL__NAME
+          value: "${postgres_name}"
+        - name: AUTHENTIK_POSTGRESQL__USER
+          value: "${postgres_user}"
+        - name: AUTHENTIK_POSTGRESQL__PASSWORD
+          value: "${postgres_password}"
+        - name: AUTHENTIK_REDIS__HOST
+          value: "redis"
+        - name: AUTHENTIK_ENVIRONMENT
+          value: "kubernetes"
+        - name: AUTHENTIK_LISTEN__TRUSTED_PROXY_IPS
+          value: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+        - name: AUTHENTIK_USER_ID
+          value: "3000"
+        - name: AUTHENTIK_GROUP_ID
+          value: "3000"
+        resources:
+          requests:
+            cpu: 100m
+            memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 2Gi
+        volumeMounts:
+        - name: media
+          mountPath: /media
+      volumes:
+      - name: media
+        persistentVolumeClaim:
+          claimName: authentik-media-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: authentik-service
+  namespace: authentik
+spec:
+  selector:
+    app: authentik-server
+  ports:
+    - name: http
+      port: 80
+      targetPort: 9000
+    - name: https
+      port: 443
+      targetPort: 9443
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: authentik-ingress
+  namespace: authentik
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    kubernetes.io/ingress.class: traefik
+    uptime-kuma.autodiscovery.probe.enabled: "true"
+    uptime-kuma.autodiscovery.probe.type: "http"
+    uptime-kuma.autodiscovery.probe.parent: "Kubernetes Apps"
+spec:
+  ingressClassName: traefik
+  rules:
+  - host: auth.netnook.cloud
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: authentik-service
+            port:
+              number: 80

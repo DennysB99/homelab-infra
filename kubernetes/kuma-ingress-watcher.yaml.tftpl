@@ -1,0 +1,119 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: uptime-kuma-reconciler
+  namespace: monitoring
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: uptime-kuma-reconciler
+rules:
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["traefik.io"]
+    resources: ["ingressroutes"]
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: uptime-kuma-reconciler
+subjects:
+  - kind: ServiceAccount
+    name: uptime-kuma-reconciler
+    namespace: monitoring
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: uptime-kuma-reconciler
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: uptime-kuma-reconciler-credentials
+  namespace: monitoring
+type: Opaque
+stringData:
+  username: "${kuma_username}"
+  password: "${kuma_password}"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: uptime-kuma-reconciler-config
+  namespace: monitoring
+data:
+  UPTIME_KUMA_URL: "http://uptime-kuma-service.monitoring.svc.cluster.local:3001"
+  WATCH_INGRESS: "True"
+  WATCH_INGRESSROUTES: "True"
+  WATCH_INTERVAL: "60"
+  USE_TRAEFIK_V3_CRD_GROUP: "True"
+  DEFAULT_PARENT: "Kubernetes Apps"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: uptime-kuma-reconciler-script
+  namespace: monitoring
+data:
+  controller.py: |
+    ${indent(4, controller_code)}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: uptime-kuma-reconciler
+  namespace: monitoring
+  labels:
+    app: uptime-kuma-reconciler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: uptime-kuma-reconciler
+  template:
+    metadata:
+      labels:
+        app: uptime-kuma-reconciler
+    spec:
+      serviceAccountName: uptime-kuma-reconciler
+      containers:
+        - name: reconciler
+          image: ghcr.io/squent/kuma-ingress-watcher:latest
+          envFrom:
+            - configMapRef:
+                name: uptime-kuma-reconciler-config
+          env:
+            - name: UPTIME_KUMA_USER
+              valueFrom:
+                secretKeyRef:
+                  name: uptime-kuma-reconciler-credentials
+                  key: username
+            - name: UPTIME_KUMA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: uptime-kuma-reconciler-credentials
+                  key: password
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          volumeMounts:
+            - name: controller-script
+              mountPath: /app/kuma_ingress_watcher/controller.py
+              subPath: controller.py
+      volumes:
+        - name: controller-script
+          configMap:
+            name: uptime-kuma-reconciler-script
