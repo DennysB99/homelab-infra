@@ -555,6 +555,27 @@ services:
     labels:
       kuma.mediastack.group.name: "Media Stack"
 
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/New_York
+      - GENERIC_TIMEZONE=America/New_York
+      - N8N_PORT=5678
+      - WEBHOOK_URL=https://n8n.netnook.cloud/
+      - NODES_EXCLUDE=[]
+    volumes:
+      - /var/lib/docker-data/n8n:/home/node/.n8n
+    labels:
+      kuma.n8n.http.name: "n8n"
+      kuma.n8n.http.url: "http://10.0.50.30:5678"
+      kuma.n8n.http.parent_name: "mediastack"
+
   watchtower:
     image: ghcr.io/nicholas-fedor/watchtower:latest
     container_name: watchtower
@@ -595,6 +616,7 @@ EOT
   filename = "${path.module}/../docker/backup/docker-compose.yml"
 }
 
+
 resource "null_resource" "deploy_media_compose" {
   depends_on = [local_file.media_compose, local_file.backup_compose, null_resource.ansible_provision]
 
@@ -626,6 +648,8 @@ resource "null_resource" "deploy_media_compose" {
           echo '$SUDO_PASS' | sudo -S cp -rp /mnt/HDDs/docker-data/. /var/lib/docker-data/ &&
           echo '$SUDO_PASS' | sudo -S chown -R debian:debian /var/lib/docker-data;
         fi &&
+        echo '$SUDO_PASS' | sudo -S mkdir -p /var/lib/docker-data/n8n &&
+        echo '$SUDO_PASS' | sudo -S chown -R debian:debian /var/lib/docker-data/n8n &&
         echo '$SUDO_PASS' | sudo -S mkdir -p /var/lib/docker-data/media &&
         echo '$SUDO_PASS' | sudo -S cp /tmp/docker-compose-media.yml /var/lib/docker-data/media/docker-compose.yml &&
         echo '$SUDO_PASS' | sudo -S docker compose -f /var/lib/docker-data/media/docker-compose.yml down || true &&
@@ -724,7 +748,8 @@ resource "null_resource" "kubernetes_setup" {
       local_file.kuma_ingress_watcher_manifest.content,
       filesha256("${path.module}/../kubernetes/apps/uptime-kuma.yaml"),
       filesha256("${path.module}/../kubernetes/system/traefik-dashboard-ingress.yaml"),
-      filesha256("${path.module}/../kubernetes/system/cloudflared.yaml")
+      filesha256("${path.module}/../kubernetes/system/cloudflared.yaml"),
+      filesha256("${path.module}/../kubernetes/system/external-bridge.yaml")
     ]))
   }
 
